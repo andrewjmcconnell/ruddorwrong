@@ -1,5 +1,4 @@
-
-import "@expo/browser-polyfill";
+// import "@expo/browser-polyfill";
 import React, { useState, useEffect, useRef } from "react";
 import {
   StyleSheet,
@@ -23,48 +22,27 @@ import * as tf from "@tensorflow/tfjs";
 import * as mobilenet from "@tensorflow-models/mobilenet";
 import * as tmImage from "@teachablemachine/image";
 
+import firebase from "./config/firebase";
+import uuid from "react-native-uuid";
+
 import {
   cameraWithTensors,
   bundleResourceIO
 } from "@tensorflow/tfjs-react-native";
-// import * as ml5 from "ml5";
-// import model from "./model";
-import * as blazeface from "@tensorflow-models/blazeface";
+import {
+  getModel,
+  convertBase64ToTensor,
+  startPrediction,
+  populateData
+} from "./utils";
 
 console.disableYellowBox = true;
-
-FileReader.prototype.readAsArrayBuffer = function(blob) {
-  console.log("BLOB", blob);
-  if (this.readyState === this.LOADING) throw new Error("InvalidStateError");
-  this._setReadyState(this.LOADING);
-  this._result = null;
-  this._error = null;
-  const fr = new FileReader();
-  fr.onloadend = () => {
-    const content = atob(
-      fr.result.substr("data:application/octet-stream;base64,".length)
-    );
-    const buffer = new ArrayBuffer(content.length);
-    const view = new Uint8Array(buffer);
-    view.set(Array.from(content).map(c => c.charCodeAt(0)));
-    this._result = buffer;
-    this._setReadyState(this.DONE);
-  };
-  fr.readAsDataURL(blob);
-};
-
-const TensorCamera = cameraWithTensors(Camera);
-// const modelJson = require('./model.js');
-// console.log("modelJson", model)
-// const modelWeights = require('./weights.bin');
-// const modelUrl = RNFS.MainBundlePath + "/MegaRuddFP16.mlmodel";
-
-// const classifier = ml5.imageClassifier("./model.json", modelLoaded);
 
 export default () => {
   const [faces, setFaces] = useState([]);
   const [cameraRef, setCameraRef] = useState(null);
   const [predictImage, setPredictImage] = useState(null);
+  const [metadata, setMetadata] = useState(null);
   const [croppedImages, setCroppedImages] = useState(null);
   // const [model, setModel] = useState(null);
   const [model, setModel] = useState(null);
@@ -74,41 +52,43 @@ export default () => {
     askForPermission
   ] = Permissions.usePermissions(Permissions.CAMERA, { ask: true });
 
-  const loadModel = async () => {
-    console.log("loading model");
-    // const model = await mobilenet.load({
-    //   version: 1,
-    //   modelUrl: "./model.json"
-    // });
-    // const model = await tf.loadLayersModel(
-    //   bundleResourceIO(modelJson, modelWeights));
-    // const tfModel = await tf.loadLayersModel(
-    //   "https://teachablemachine.withgoogle.com/models/lNj2ao8Pz/model.json"
-    // );
-    const url = "https://teachablemachine.withgoogle.com/models/lNj2ao8Pz";
-    const tfModel = await tmImage.load(
-      url + "/model.json",
-      url + "/metadata.json"
-    );
-    console.log("SUMMARY");
-    // console.log(tfModel.summary());
-    console.log("END SUMMARY");
-    return tfModel;
-  };
+  async function uploadImageAsync(uri) {
+    const blob = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.onload = function() {
+        resolve(xhr.response);
+      };
+      xhr.onerror = function(e) {
+        console.log(e);
+        reject(new TypeError("Network request failed"));
+      };
+      xhr.responseType = "blob";
+      xhr.open("GET", uri, true);
+      xhr.send(null);
+    });
+
+    const ref = firebase
+      .storage()
+      .ref()
+      .child(uuid.v4());
+    const snapshot = await ref.put(blob);
+
+    blob.close();
+
+    return await snapshot.ref.getDownloadURL();
+  }
 
   useEffect(() => {
     if (!frameworkReady) {
       (async () => {
         await tf.ready();
-        setModel(await loadModel());
+        setModel(await getModel());
         console.log("TF READY!");
 
         setFrameworkReady(true);
       })();
     }
   }, []);
-
-  // console.log("permisson", permission);
 
   if (!permission || permission.status !== "granted" || !frameworkReady) {
     return (
@@ -119,42 +99,7 @@ export default () => {
     );
   }
 
-  let textureDims;
-  if (Platform.OS === "ios") {
-    textureDims = {
-      height: 1920,
-      width: 1080
-    };
-  } else {
-    textureDims = {
-      height: 1200,
-      width: 1600
-    };
-  }
-
-  const getPrediction = async tensor => {
-    if (!tensor) {
-      return;
-    }
-
-    // console.log("tensor", tensor);
-    // console.log("tensor shape", tensor.shape);
-
-    //topk set to 1
-    const prediction = await model.predict(tensor);
-    // console.log(`prediction: ${JSON.stringify(prediction)}`);
-
-    if (!prediction || prediction.length === 0) {
-      return;
-    }
-
-    const data = await prediction.data();
-    console.log("PREDICTION", data[0]);
-    tf.dispose([tensor]);
-  };
-
   const predict = async (data, faceProps) => {
-    console.log("faces", data.uri);
     if (faceProps.length == 0) {
       return;
     }
@@ -183,15 +128,22 @@ export default () => {
             }
           }
         ],
-        { compress: 1, format: ImageManipulator.SaveFormat.JPEG }
+        { compress: 1, format: ImageManipulator.SaveFormat.JPEG, base64: true }
       );
-      console.log("crop", crop.uri);
-      croppedimgs.push(crop);
-      const prediction = await model.predict(crop);
-      console.log(`prediction: ${JSON.stringify(prediction)}`);
-
-      return crop;
+      // console.log("crop", crop);
+      // croppedimgs.push(crop);
+      const tensor = await convertBase64ToTensor(crop);
+      const typedArray = await startPrediction(model, tensor);
+      const predictions = Array.from(typedArray);
+      console.log(`rudd: ${predictions[0]}, wrong: ${predictions[1]}`);
+      croppedimgs.push({
+        ...crop,
+        className: predictions[0] > predictions[1] ? "Rudd" : "Wrong",
+        probability:
+          predictions[0] > predictions[1] ? predictions[0] : predictions[1]
+      });
     });
+
     setCroppedImages(croppedimgs);
 
     // const prediction = await model.predict(predictImage);
@@ -205,21 +157,6 @@ export default () => {
     // console.log("PREDICTION", data[0]);
   };
 
-  const handleCameraStream = imageAsTensors => {
-    // console.log("imageAsTensors", imageAsTensors);
-    const loop = async () => {
-      const imgTensor = tf.tidy(() => {
-        let imgTensor = imageAsTensors.next().value;
-        imgTensor = tf.cast(imgTensor, "float32");
-        imgTensor = imgTensor.expandDims(0);
-        return imgTensor;
-      });
-      await getPrediction(imgTensor);
-      requestAnimationFrameId = requestAnimationFrame(loop);
-    };
-    loop();
-  };
-
   return (
     <View
       style={styles.container}
@@ -227,12 +164,16 @@ export default () => {
         if (cameraRef) {
           // console.log(cameraRef);
           const takePic = async () => {
-            cameraRef.pausePreview();
+            // cameraRef.pausePreview();
             const facesSnapshot = faces;
-            const data = await cameraRef.takePictureAsync();
-            console.log("data", data);
+            const data = await cameraRef.takePictureAsync({
+              quality: 0.1,
+              fixOrientation: true
+            });
+            // const croppedData = await cropPicture(data)
             setPredictImage(data.uri);
             predict(data, facesSnapshot);
+            // here
           };
           takePic();
         }
@@ -241,19 +182,27 @@ export default () => {
       {!!croppedImages &&
         croppedImages.length > 0 &&
         croppedImages.map(img => (
-          <Image
-            style={{ width: img.width, height: img.height }}
-            source={{
-              uri: img.uri
-            }}
-          />
+          <View
+            key={`${img.className}-${img.probability}`}
+            style={{ flex: 1, alignItems: "center", justifyContent: "center" }}
+          >
+            <Image
+              style={{ width: img.width, height: img.height }}
+              source={{
+                uri: img.uri
+              }}
+            />
+            <Text>
+              {img.className}, probability: {img.probability}
+            </Text>
+          </View>
         ))}
       {!!faces &&
         faces.length > 0 &&
         faces.map(face => {
           return (
             <Identifier
-              key={face.faceId}
+              key={uuid.v4()}
               horizontal
               accuracy={0.5}
               style={{
@@ -282,7 +231,7 @@ export default () => {
           mode: FaceDetector.Constants.Mode.fast,
           detectLandmarks: FaceDetector.Constants.Landmarks.all,
           runClassifications: FaceDetector.Constants.Classifications.none,
-          minDetectionInterval: 1000,
+          minDetectionInterval: 100,
           tracking: true
         }}
         onFacesDetected={face => {

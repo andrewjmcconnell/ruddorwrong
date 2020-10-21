@@ -22,7 +22,11 @@ classifier.
 
 ## Resources
 [Teachable Machine](https://teachablemachine.withgoogle.com)
+
 [Image Downloader](https://chrome.google.com/webstore/detail/image-downloader/cnpniohnfphhjihaiiggeabnkjhpaldj?hl=en-US)
+
 [Deep Learning with React Native (iOS only) by Thomas Dittmar](https://dev.to/dittmarconsulting/deep-learning-with-react-native-ios-only-2470)
+
 [Nic or Not](https://github.com/GantMan/nicornot)
+
 [Paul Rudd for Face Model and Laffs](https://www.youtube.com/watch?v=FsaR0UCRh5Y)

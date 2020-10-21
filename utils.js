@@ -158,35 +158,3 @@ export const populateData = typedArray => {
   });
 };
 
-export const cropPicture = async (imageData, maskDimension) => {
-  try {
-    const { uri, width, height } = imageData;
-    const scale = height / Dimensions.get("window").height;
-    const cropWidth = maskDimension * (width / DEVICE_WIDTH);
-    const cropHeight = maskDimension * (height / DEVICE_HEIGHT);
-    const actions = [
-      {
-        crop: {
-          originX: width / 2 - cropWidth / 2,
-          originY: height / 2 - cropHeight / 2,
-          width: cropWidth,
-          height: cropHeight
-        }
-      },
-      {
-        resize: {
-          width: BITMAP_DIMENSION,
-          height: BITMAP_DIMENSION
-        }
-      }
-    ];
-    const saveOptions = {
-      compress: 1,
-      format: ImageManipulator.SaveFormat.JPEG,
-      base64: true
-    };
-    return await ImageManipulator.manipulateAsync(uri, actions, saveOptions);
-  } catch (error) {
-    console.log("Could not crop & resize photo", error);
-  }
-};
